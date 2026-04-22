@@ -1,0 +1,31 @@
+[package]
+name = "oxide-forge"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+authors = ["Nikhil Ranjan"]
+description = "A Rust-based WebAssembly runtime for vibecoders"
+readme = "README.md"
+license = "Apache-2.0"
+repository = "https://github.com/nikhilranjan/oxide-forge"
+homepage = "https://github.com/nikhilranjan/oxide-forge"
+keywords = ["wasm", "webassembly", "runtime", "vibecoding"]
+categories = ["wasm", "development-tools"]
+
+[lib]
+name = "oxide_forge"
+path = "src/lib.rs"
+
+[[bin]]
+name = "oxide-forge"
+path = "src/main.rs"
+
+[dependencies]
+
+[dev-dependencies]
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 3
+strip = true
