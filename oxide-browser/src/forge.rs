@@ -20,7 +20,9 @@
 //!
 //! The Anthropic API key can be read from the `ANTHROPIC_API_KEY` environment
 //! variable at startup or configured from the `oxide://forge` UI. The system
-//! prompt is composed at boot from the markdown files in `forge/`.
+//! prompt is composed at boot from the `oxide-wasm-app` Agent Skill under
+//! `forge/skills/oxide-wasm-app/` (see <https://agentskills.io/>): its
+//! `SKILL.md` body plus every markdown file it bundles in `references/`.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -991,28 +993,107 @@ fn load_session_from_dir(project_dir: &Path) -> Option<SharedSession> {
     })))
 }
 
-fn build_system_prompt(repo_root: &Path) -> Result<String> {
-    let forge = repo_root.join("forge");
-    let core =
-        std::fs::read_to_string(forge.join("SYSTEM_PROMPT.md")).context("read SYSTEM_PROMPT.md")?;
-    let caps =
-        std::fs::read_to_string(forge.join("CAPABILITIES.md")).context("read CAPABILITIES.md")?;
-    let patterns =
-        std::fs::read_to_string(forge.join("PATTERNS.md")).context("read PATTERNS.md")?;
-    let recipes = std::fs::read_to_string(forge.join("RECIPES.md")).context("read RECIPES.md")?;
+/// Name of the Agent Skill powering Forge generations. The folder layout
+/// follows the agentskills.io spec: `<skill>/SKILL.md` plus bundled
+/// resources under `<skill>/references/`.
+const FORGE_SKILL_NAME: &str = "oxide-wasm-app";
 
-    Ok(format!(
-        "{core}\n\n\
-         ---\n\n\
-         # Reference: Capabilities\n\n\
-         {caps}\n\n\
-         ---\n\n\
-         # Reference: Patterns\n\n\
-         {patterns}\n\n\
-         ---\n\n\
-         # Reference: Recipes\n\n\
-         {recipes}\n"
-    ))
+/// Compose the Claude system prompt from the Forge Agent Skill.
+///
+/// This loads `forge/skills/<skill>/SKILL.md`, strips its YAML
+/// frontmatter (per the agentskills.io spec), and appends every markdown
+/// file in `forge/skills/<skill>/references/` so that the single
+/// Anthropic Messages call has all capability, pattern, and recipe
+/// context in-scope. References are sorted for determinism.
+fn build_system_prompt(repo_root: &Path) -> Result<String> {
+    let skill_dir = repo_root
+        .join("forge")
+        .join("skills")
+        .join(FORGE_SKILL_NAME);
+    let skill_md_path = skill_dir.join("SKILL.md");
+    let skill_md = std::fs::read_to_string(&skill_md_path)
+        .with_context(|| format!("read skill at {}", skill_md_path.display()))?;
+    let (frontmatter, body) = split_skill_frontmatter(&skill_md);
+    if frontmatter.is_none() {
+        bail!(
+            "skill {} is missing required YAML frontmatter (see https://agentskills.io/specification)",
+            skill_md_path.display()
+        );
+    }
+
+    let mut out = String::with_capacity(body.len() + 8 * 1024);
+    out.push_str(body.trim_start());
+
+    let references_dir = skill_dir.join("references");
+    let mut reference_files: Vec<PathBuf> = match std::fs::read_dir(&references_dir) {
+        Ok(entries) => entries
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| {
+                p.is_file()
+                    && p.extension()
+                        .and_then(|e| e.to_str())
+                        .map(|e| e.eq_ignore_ascii_case("md"))
+                        .unwrap_or(false)
+            })
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+    reference_files.sort();
+
+    for path in reference_files {
+        let body = std::fs::read_to_string(&path)
+            .with_context(|| format!("read reference {}", path.display()))?;
+        let title = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Reference");
+        out.push_str("\n\n---\n\n# Reference: ");
+        out.push_str(title);
+        out.push_str("\n\n");
+        out.push_str(body.trim_end());
+        out.push('\n');
+    }
+
+    Ok(out)
+}
+
+/// Split a SKILL.md document into its YAML frontmatter and markdown body.
+/// The frontmatter is the optional leading `---\n…\n---\n` block defined
+/// by the agentskills.io specification. Returns `(None, whole_text)` when
+/// no frontmatter is present.
+fn split_skill_frontmatter(doc: &str) -> (Option<&str>, &str) {
+    let rest = match doc.strip_prefix("---\n") {
+        Some(r) => r,
+        None => match doc.strip_prefix("---\r\n") {
+            Some(r) => r,
+            None => return (None, doc),
+        },
+    };
+    // Find the closing `---` on its own line.
+    let mut search_from = 0usize;
+    while let Some(rel) = rest[search_from..].find("\n---") {
+        let end = search_from + rel;
+        let after_marker = end + "\n---".len();
+        let tail = &rest[after_marker..];
+        let is_line_terminated = tail.is_empty()
+            || tail.starts_with('\n')
+            || tail.starts_with("\r\n");
+        if is_line_terminated {
+            let fm = &rest[..end];
+            // Skip the line-terminator after `---`.
+            let body_start = if tail.starts_with("\r\n") {
+                after_marker + 2
+            } else if tail.starts_with('\n') {
+                after_marker + 1
+            } else {
+                after_marker
+            };
+            return (Some(fm), &rest[body_start..]);
+        }
+        search_from = end + 1;
+    }
+    (None, doc)
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────
@@ -1089,10 +1170,16 @@ mod tests {
     }
 
     #[test]
-    fn repo_root_contains_forge_dir() {
-        // Sanity check that `repo_root()` points at the workspace root.
+    fn repo_root_contains_forge_skill() {
+        // Sanity check that `repo_root()` points at the workspace root and the
+        // `oxide-wasm-app` Agent Skill is wired up.
         let root = repo_root();
-        assert!(root.join("forge").join("SYSTEM_PROMPT.md").is_file());
+        let skill = root
+            .join("forge")
+            .join("skills")
+            .join(FORGE_SKILL_NAME)
+            .join("SKILL.md");
+        assert!(skill.is_file(), "missing skill at {}", skill.display());
         assert!(root.join("oxide-sdk").join("Cargo.toml").is_file());
     }
 
@@ -1102,12 +1189,31 @@ mod tests {
         // Must be at least a few KB — the full reference is substantial.
         assert!(prompt.len() > 5_000, "prompt too small: {}", prompt.len());
         // Must embed the core rules section.
-        assert!(prompt.contains("Oxide Forge — System Prompt"));
+        assert!(prompt.contains("Oxide Forge — Guest WASM App Skill"));
         assert!(prompt.contains("start_app"));
         assert!(prompt.contains("on_frame"));
-        // And reference sections.
-        assert!(prompt.contains("Reference: Capabilities"));
-        assert!(prompt.contains("Reference: Patterns"));
-        assert!(prompt.contains("Reference: Recipes"));
+        // YAML frontmatter must be stripped.
+        assert!(!prompt.starts_with("---"));
+        assert!(!prompt.contains("name: oxide-wasm-app"));
+        // Bundled references must be appended.
+        assert!(prompt.contains("Reference: CAPABILITIES"));
+        assert!(prompt.contains("Reference: PATTERNS"));
+        assert!(prompt.contains("Reference: RECIPES"));
+    }
+
+    #[test]
+    fn splits_skill_frontmatter() {
+        let doc = "---\nname: demo\ndescription: test\n---\n# Body\ntext\n";
+        let (fm, body) = split_skill_frontmatter(doc);
+        assert_eq!(fm, Some("name: demo\ndescription: test"));
+        assert_eq!(body, "# Body\ntext\n");
+    }
+
+    #[test]
+    fn missing_frontmatter_passes_through() {
+        let doc = "# No frontmatter\n";
+        let (fm, body) = split_skill_frontmatter(doc);
+        assert!(fm.is_none());
+        assert_eq!(body, doc);
     }
 }

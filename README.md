@@ -234,10 +234,13 @@ the error.
 | `oxide://forge` native page | [`oxide-browser/src/ui.rs`](./oxide-browser/src/ui.rs) |
 | Base Cargo template copied per session | [`forge/templates/base/`](./forge/templates/base/) |
 
-Every generation reads the exact signatures from
-[`forge/CAPABILITIES.md`](./forge/CAPABILITIES.md), the idiomatic rules
-from [`forge/PATTERNS.md`](./forge/PATTERNS.md), and 12 runnable
-snippets in [`forge/RECIPES.md`](./forge/RECIPES.md). Generated code is
+Every generation is driven by the [`oxide-wasm-app`](./forge/skills/oxide-wasm-app/SKILL.md)
+[Agent Skill](https://agentskills.io/), which reads the exact signatures from
+[`CAPABILITIES.md`](./forge/skills/oxide-wasm-app/references/CAPABILITIES.md),
+the idiomatic rules from
+[`PATTERNS.md`](./forge/skills/oxide-wasm-app/references/PATTERNS.md),
+and 12 runnable snippets in
+[`RECIPES.md`](./forge/skills/oxide-wasm-app/references/RECIPES.md). Generated code is
 constrained to the same capability-based sandbox as every other guest
 app once loaded. The Forge build step intentionally runs host `cargo`
 because it is a native developer workflow.
