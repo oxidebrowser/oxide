@@ -9,7 +9,7 @@
 
 Oxide is a decentralised browser that fetches and executes `.wasm` (WebAssembly) modules instead of HTML/JavaScript. Guest applications run in a secure, sandboxed environment with capability-based access to host APIs.
 
-> **New — [Oxide Forge](./claude-hackathon.md):** an AI-native layer inside Oxide where Claude Opus 4.7 writes, compiles, and hot-loads guest `.wasm` apps in the same browser. Open `oxide://forge`, describe what you want, watch it run. See the [hackathon plan](./claude-hackathon.md) and the [Forge Kit](./forge/README.md).
+[Oxide Forge](./claude-hackathon.md):** an AI-native layer inside Oxide where Claude Opus 4.7 writes, compiles, and hot-loads guest `.wasm` apps in the same browser. Open `oxide://forge`, describe what you want, watch it run. See the [hackathon plan](./claude-hackathon.md) and the [Forge Kit](./forge/README.md).
 
 ![oxide](screens/oxide.png)
 
