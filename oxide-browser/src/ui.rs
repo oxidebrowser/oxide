@@ -56,6 +56,7 @@ unsafe impl Send for RunResult {}
 
 #[derive(Clone, PartialEq)]
 enum InternalPage {
+    Home,
     History,
     Bookmarks,
     About,
@@ -64,6 +65,7 @@ enum InternalPage {
 
 fn try_internal_page(url: &str) -> Option<InternalPage> {
     match url {
+        "oxide://home" => Some(InternalPage::Home),
         "oxide://history" => Some(InternalPage::History),
         "oxide://bookmarks" => Some(InternalPage::Bookmarks),
         "oxide://about" => Some(InternalPage::About),
@@ -165,10 +167,10 @@ impl TabState {
 
         Self {
             id,
-            url_input: String::from("https://"),
+            url_input: String::from("oxide://home"),
             host_state,
             status,
-            show_console: true,
+            show_console: false,
             run_tx: req_tx,
             run_rx: Arc::new(Mutex::new(res_rx)),
             image_textures: HashMap::new(),
@@ -181,14 +183,20 @@ impl TabState {
             last_frame: Instant::now(),
             keys_held: HashSet::new(),
             text_input_focus: None,
-            url_cursor: 8, // after "https://"
-            url_sel_start: 8,
+            url_cursor: 12,
+            url_sel_start: 12,
             url_selecting: false,
             url_text_bounds: Arc::new(Mutex::new(Bounds::default())),
-            internal_page: None,
+            internal_page: Some(InternalPage::Home),
             forge_prompt: String::new(),
             forge_session_id: None,
         }
+        .with_home_status()
+    }
+
+    fn with_home_status(self) -> Self {
+        *self.status.lock().unwrap() = PageStatus::Running("oxide://home".to_string());
+        self
     }
 
     fn display_title(&self) -> String {
@@ -297,6 +305,7 @@ impl TabState {
                     self.pending_history_url = None;
                     self.live_module = None;
                 } else {
+                    self.internal_page = None;
                     if let Some(url) = self.pending_history_url.take() {
                         let mut nav = self.host_state.navigation.lock().unwrap();
                         nav.push(HistoryEntry::new(&url));
@@ -1005,6 +1014,9 @@ pub struct OxideBrowserView {
     url_focus: FocusHandle,
     /// Keyboard focus for the `oxide://forge` prompt input.
     forge_focus: FocusHandle,
+    /// Keyboard focus for the `oxide://forge` Anthropic API key input.
+    forge_api_key_focus: FocusHandle,
+    forge_api_key_input: String,
     /// Receiver for [`FilePickDone`]; dialog runs on a background thread so the main thread never holds `App` during `NSOpenPanel`.
     file_pick_rx: Option<mpsc::Receiver<FilePickDone>>,
     download_manager: DownloadManager,
@@ -1033,6 +1045,8 @@ impl OxideBrowserView {
             canvas_focus: cx.focus_handle(),
             url_focus: cx.focus_handle(),
             forge_focus: cx.focus_handle(),
+            forge_api_key_focus: cx.focus_handle(),
+            forge_api_key_input: String::new(),
             file_pick_rx: None,
             download_manager: DownloadManager::new(),
             show_downloads: false,
@@ -1047,6 +1061,25 @@ impl OxideBrowserView {
             *g = ForgeState::new();
         }
         g.is_some()
+    }
+
+    fn forge_set_api_key(&mut self) {
+        let key = self.forge_api_key_input.trim().to_string();
+        if key.is_empty() {
+            return;
+        }
+        let mut g = self.forge.lock().unwrap();
+        match g.as_mut() {
+            Some(forge) => {
+                forge.set_api_key(key);
+            }
+            None => {
+                *g = ForgeState::with_api_key(key);
+            }
+        }
+        if g.is_some() {
+            self.forge_api_key_input.clear();
+        }
     }
 
     /// Snapshot the session active in the current tab, if any.
@@ -1137,6 +1170,35 @@ impl OxideBrowserView {
         }
     }
 
+    fn forge_delete_current_creation(&mut self) {
+        let id = match self.tabs[self.active_tab].forge_session_id {
+            Some(id) => id,
+            None => return,
+        };
+        let result = {
+            let mut g = self.forge.lock().unwrap();
+            g.as_mut().map(|forge| forge.delete_creation(id))
+        };
+        match result {
+            Some(Ok(())) => {
+                for tab in &mut self.tabs {
+                    if tab.forge_session_id == Some(id) {
+                        tab.forge_session_id = None;
+                        tab.forge_prompt.clear();
+                    }
+                }
+            }
+            Some(Err(e)) => {
+                crate::capabilities::console_log(
+                    &self.tabs[self.active_tab].host_state.console,
+                    ConsoleLevel::Error,
+                    format!("[FORGE] delete failed: {e}"),
+                );
+            }
+            None => {}
+        }
+    }
+
     /// Load the built `.wasm` for the current session into a new tab.
     fn forge_run_in_new_tab(&mut self) {
         let id = match self.tabs[self.active_tab].forge_session_id {
@@ -1163,6 +1225,7 @@ impl OxideBrowserView {
         tab.url_input = format!("oxide://forge/run/{slug}");
         tab.url_cursor = tab.url_input.len();
         tab.url_sel_start = tab.url_input.len();
+        tab.internal_page = None;
         let _ = tab.run_tx.send(RunRequest::LoadLocal(bytes));
     }
 
@@ -1177,6 +1240,7 @@ impl OxideBrowserView {
                 let tab = &mut self.tabs[self.active_tab];
                 tab.url_input = file_url.clone();
                 tab.pending_history_url = Some(file_url);
+                tab.internal_page = None;
                 let _ = tab.run_tx.send(RunRequest::LoadLocal(bytes));
                 cx.notify();
             }
@@ -1414,6 +1478,40 @@ impl Render for OxideBrowserView {
                     if event.keystroke.modifiers.secondary() && event.keystroke.key == "b" {
                         this.show_bookmarks = !this.show_bookmarks;
                         cx.notify();
+                        return;
+                    }
+                    if this.forge_api_key_focus.is_focused(window) {
+                        match event.keystroke.key.as_str() {
+                            "enter" => {
+                                this.forge_set_api_key();
+                                cx.notify();
+                                return;
+                            }
+                            "escape" => {
+                                this.forge_api_key_input.clear();
+                                cx.notify();
+                                return;
+                            }
+                            "backspace" => {
+                                this.forge_api_key_input.pop();
+                                cx.notify();
+                                return;
+                            }
+                            _ => {}
+                        }
+                        if event.keystroke.modifiers.secondary() && event.keystroke.key == "v" {
+                            if let Ok(mut cb) = arboard::Clipboard::new() {
+                                if let Ok(pasted) = cb.get_text() {
+                                    this.forge_api_key_input.push_str(pasted.trim());
+                                    cx.notify();
+                                }
+                            }
+                            return;
+                        }
+                        if let Some(s) = text_insert_from_keystroke(&event.keystroke) {
+                            this.forge_api_key_input.push_str(&s);
+                            cx.notify();
+                        }
                         return;
                     }
                     if this.forge_focus.is_focused(window) {
@@ -2127,6 +2225,107 @@ impl Render for OxideBrowserView {
 
         if let Some(ref page) = self.tabs[active].internal_page {
             match page {
+                InternalPage::Home => {
+                    content_col = content_col.child(
+                        div()
+                            .id("oxide_home_page")
+                            .flex_1()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .p_4()
+                            .child(
+                                div()
+                                    .w(px(560.0))
+                                    .p_5()
+                                    .rounded_lg()
+                                    .bg(gpui::rgb(0x222228))
+                                    .border_1()
+                                    .border_color(gpui::rgb(0x3a3a44))
+                                    .child(
+                                        div()
+                                            .text_xl()
+                                            .font_weight(gpui::FontWeight::BOLD)
+                                            .text_color(gpui::rgb(0x80d8d0))
+                                            .child("Oxide Browser"),
+                                    )
+                                    .child(
+                                        div()
+                                            .mt_2()
+                                            .text_sm()
+                                            .text_color(gpui::rgb(0xc8c8d4))
+                                            .child("A binary-first browser for WebAssembly apps. Oxide loads .wasm modules directly, runs them in a capability-based Wasmtime sandbox, and gives them a native GPU-accelerated canvas instead of an HTML/JavaScript runtime."),
+                                    )
+                                    .child(
+                                        div()
+                                            .mt_4()
+                                            .flex()
+                                            .flex_col()
+                                            .gap_2()
+                                            .text_xs()
+                                            .text_color(gpui::rgb(0xa6a6b8))
+                                            .child("Open a local .wasm file, enter an HTTP(S) .wasm URL, or build a new app with Forge.")
+                                            .child("Guest apps start with no filesystem, environment, or socket access. Every host interaction goes through explicit Oxide capabilities."),
+                                    )
+                                    .child(
+                                        div()
+                                            .mt_4()
+                                            .h(px(1.0))
+                                            .bg(gpui::rgb(0x3a3a44)),
+                                    )
+                                    .child(
+                                        div()
+                                            .mt_4()
+                                            .flex()
+                                            .flex_row()
+                                            .items_center()
+                                            .justify_between()
+                                            .gap_3()
+                                            .child(
+                                                div()
+                                                    .flex_1()
+                                                    .min_w_0()
+                                                    .child(
+                                                        div()
+                                                            .text_sm()
+                                                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                            .text_color(gpui::rgb(0xe8e8f4))
+                                                            .child("Create with Oxide Forge"),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .mt_1()
+                                                            .text_xs()
+                                                            .text_color(gpui::rgb(0x8a8aa0))
+                                                            .child("Describe an app and Forge will generate, build, and hot-load a sandboxed guest WASM module."),
+                                                    ),
+                                            )
+                                            .child(
+                                                div()
+                                                    .id("oxide_home_forge")
+                                                    .px_3()
+                                                    .py_2()
+                                                    .rounded_md()
+                                                    .bg(gpui::rgb(0x2f6f68))
+                                                    .text_sm()
+                                                    .text_color(gpui::rgb(0xffffff))
+                                                    .cursor_pointer()
+                                                    .child("oxide://forge")
+                                                    .on_click(cx.listener(
+                                                        |this, _: &ClickEvent, _, cx| {
+                                                            this.tabs[this.active_tab].navigate_to(
+                                                                "oxide://forge".to_string(),
+                                                                true,
+                                                                &this.download_manager,
+                                                            );
+                                                            cx.notify();
+                                                        },
+                                                    )),
+                                            ),
+                                    ),
+                            ),
+                    );
+                }
                 InternalPage::History => {
                     let all_entries: Vec<(Vec<u8>, String, String, u64)> = self
                         .history_store
@@ -2502,12 +2701,25 @@ impl Render for OxideBrowserView {
                         .unwrap_or_else(|| "(not configured)".to_string());
                     let prompt_draft = self.tabs[active].forge_prompt.clone();
                     let prompt_focused = self.forge_focus.is_focused(window);
+                    let api_key_focused = self.forge_api_key_focus.is_focused(window);
+                    let api_key_draft = self.forge_api_key_input.clone();
+                    let api_key_display = if api_key_draft.is_empty() {
+                        "Anthropic API key".to_string()
+                    } else {
+                        "•".repeat(api_key_draft.chars().count().min(32))
+                    };
+                    let api_key_color = if api_key_draft.is_empty() {
+                        gpui::rgb(0x5a5a6a)
+                    } else {
+                        gpui::rgb(0xe0e0ff)
+                    };
+                    let api_key_submit_enabled = !api_key_draft.trim().is_empty();
 
                     let (status_word, status_color, status_hint) = if !forge_ready {
                         (
-                            "ANTHROPIC_API_KEY not set",
+                            "API key required",
                             gpui::rgb(0xf08050),
-                            "Set ANTHROPIC_API_KEY and restart Oxide to enable Forge.",
+                            "Enter an Anthropic API key to enable Forge.",
                         )
                     } else {
                         (
@@ -2525,6 +2737,10 @@ impl Render for OxideBrowserView {
                             | Some(ForgePhase::BuildOk),
                     );
                     let can_run = matches!(phase, Some(ForgePhase::BuildOk));
+                    let can_delete = snapshot
+                        .as_ref()
+                        .map(|s| !matches!(s.phase, ForgePhase::Streaming | ForgePhase::Building))
+                        .unwrap_or(false);
 
                     let caret = if prompt_focused && caret_blink_on {
                         "\u{2588}"
@@ -2854,6 +3070,28 @@ impl Render for OxideBrowserView {
                                                     cx.notify();
                                                 },
                                             )),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("oxide_forge_delete_btn")
+                                            .px_3()
+                                            .py_2()
+                                            .rounded_md()
+                                            .bg(if can_delete {
+                                                gpui::rgb(0x8a3a3a)
+                                            } else {
+                                                gpui::rgb(0x3a3a44)
+                                            })
+                                            .text_sm()
+                                            .text_color(gpui::rgb(0xffffff))
+                                            .cursor_pointer()
+                                            .child("Delete")
+                                            .on_click(cx.listener(
+                                                |this, _: &ClickEvent, _, cx| {
+                                                    this.forge_delete_current_creation();
+                                                    cx.notify();
+                                                },
+                                            )),
                                     ),
                             );
                     } else {
@@ -2933,6 +3171,71 @@ impl Render for OxideBrowserView {
                                     ),
                             )
                             .child(div().mt_3().h(px(1.0)).bg(gpui::rgb(0x2a2a32)))
+                            .child(
+                                div()
+                                    .id("oxide_forge_api_key_row")
+                                    .mt_3()
+                                    .flex()
+                                    .flex_row()
+                                    .gap_2()
+                                    .items_center()
+                                    .child(
+                                        div()
+                                            .id("oxide_forge_api_key_input")
+                                            .track_focus(&self.forge_api_key_focus)
+                                            .focusable()
+                                            .flex_1()
+                                            .px_3()
+                                            .py_2()
+                                            .rounded_md()
+                                            .bg(gpui::rgb(0x1b1b24))
+                                            .border_1()
+                                            .border_color(if api_key_focused {
+                                                gpui::rgb(0x4ea39a)
+                                            } else {
+                                                gpui::rgb(0x33333f)
+                                            })
+                                            .text_sm()
+                                            .text_color(api_key_color)
+                                            .child(if api_key_focused && caret_blink_on {
+                                                format!("{api_key_display}\u{2588}")
+                                            } else {
+                                                api_key_display
+                                            })
+                                            .on_click(cx.listener(
+                                                |this, _: &ClickEvent, window, cx| {
+                                                    window.focus(&this.forge_api_key_focus);
+                                                    cx.notify();
+                                                },
+                                            )),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("oxide_forge_api_key_submit")
+                                            .px_3()
+                                            .py_2()
+                                            .rounded_md()
+                                            .bg(if api_key_submit_enabled {
+                                                gpui::rgb(0x2f6f68)
+                                            } else {
+                                                gpui::rgb(0x3a3a44)
+                                            })
+                                            .text_sm()
+                                            .text_color(gpui::rgb(0xffffff))
+                                            .cursor_pointer()
+                                            .child(if forge_ready {
+                                                "Update key"
+                                            } else {
+                                                "Set key"
+                                            })
+                                            .on_click(cx.listener(
+                                                |this, _: &ClickEvent, _, cx| {
+                                                    this.forge_set_api_key();
+                                                    cx.notify();
+                                                },
+                                            )),
+                                    ),
+                            )
                             .child(
                                 div()
                                     .id("oxide_forge_prompt_row")
@@ -4047,6 +4350,7 @@ fn url_to_title(url: &str) -> String {
         return "Local Module".to_string();
     }
     match url {
+        "oxide://home" => return "Home".to_string(),
         "oxide://history" => return "History".to_string(),
         "oxide://bookmarks" => return "Bookmarks".to_string(),
         "oxide://about" => return "About Oxide".to_string(),

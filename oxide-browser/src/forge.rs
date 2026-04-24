@@ -18,9 +18,9 @@
 //!    session directory and populates either `artifact_path` or
 //!    `build_log` on completion.
 //!
-//! The Anthropic API key is read from the `ANTHROPIC_API_KEY` environment
-//! variable on process start. The system prompt is composed at boot from
-//! the markdown files in `forge/`.
+//! The Anthropic API key can be read from the `ANTHROPIC_API_KEY` environment
+//! variable at startup or configured from the `oxide://forge` UI. The system
+//! prompt is composed at boot from the markdown files in `forge/`.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -181,15 +181,22 @@ pub struct ForgeState {
 }
 
 impl ForgeState {
-    /// Initialise Forge. Returns `None` if:
+    /// Initialise Forge from `ANTHROPIC_API_KEY`. Returns `None` if:
     /// - the `ANTHROPIC_API_KEY` env var is unset, or
     /// - the tokio runtime cannot be created.
+    pub fn new() -> Option<Self> {
+        let api_key = std::env::var("ANTHROPIC_API_KEY").ok()?;
+        Self::with_api_key(api_key)
+    }
+
+    /// Initialise Forge with an API key supplied by the UI. Returns `None` if
+    /// the key is empty or the tokio runtime cannot be created.
     ///
     /// The repo layout is resolved from `CARGO_MANIFEST_DIR` at compile time.
     /// Output defaults to `$OXIDE_FORGE_DIR` when set, otherwise
     /// `target/forge/`.
-    pub fn new() -> Option<Self> {
-        let api_key = std::env::var("ANTHROPIC_API_KEY").ok()?;
+    pub fn with_api_key(api_key: impl Into<String>) -> Option<Self> {
+        let api_key = api_key.into().trim().to_string();
         if api_key.is_empty() {
             return None;
         }
@@ -226,6 +233,16 @@ impl ForgeState {
         };
         state.load_existing_sessions();
         Some(state)
+    }
+
+    /// Replace the Anthropic API key used by future Forge requests.
+    pub fn set_api_key(&mut self, api_key: impl Into<String>) -> bool {
+        let api_key = api_key.into().trim().to_string();
+        if api_key.is_empty() {
+            return false;
+        }
+        self.api_key = api_key;
+        true
     }
 
     /// Create a new session and start a background Claude stream.
@@ -334,6 +351,28 @@ impl ForgeState {
                 .then_with(|| b.id.cmp(&a.id))
         });
         items
+    }
+
+    /// Delete a creation and its generated project directory.
+    pub fn delete_creation(&mut self, id: u64) -> Result<()> {
+        let session = self
+            .sessions
+            .get(&id)
+            .ok_or_else(|| anyhow!("unknown forge session {id}"))?
+            .clone();
+        let project_dir = {
+            let s = session.lock().unwrap();
+            if matches!(s.phase, ForgePhase::Streaming | ForgePhase::Building) {
+                bail!("session {id} is busy (phase={:?})", s.phase);
+            }
+            s.project_dir.clone()
+        };
+        self.sessions.remove(&id);
+        if project_dir.exists() {
+            std::fs::remove_dir_all(&project_dir)
+                .with_context(|| format!("delete {}", project_dir.display()))?;
+        }
+        Ok(())
     }
 
     /// Kick off a `cargo build` for a session whose streaming is done.

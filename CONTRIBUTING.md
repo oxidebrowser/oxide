@@ -82,7 +82,6 @@ oxide/
 ├── examples/
 │   ├── hello-oxide/            # Minimal interactive guest app
 │   └── fullstack-notes/        # Full-stack example (Rust frontend + backend)
-├── oxide-landing/              # Landing page (static HTML/CSS/JS)
 ├── ROADMAP.md                  # Phased development roadmap
 ├── Security.md                 # Security policy and bug bounty scope
 └── Cargo.toml                  # Workspace root
