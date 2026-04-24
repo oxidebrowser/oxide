@@ -5498,7 +5498,7 @@ dependencies = [
 
 [[package]]
 name = "oxide-browser"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "anyhow",
  "arboard",
@@ -5546,7 +5546,7 @@ dependencies = [
 
 [[package]]
 name = "oxide-sdk"
-version = "0.6.0"
+version = "0.6.1"
 
 [[package]]
 name = "p256"
