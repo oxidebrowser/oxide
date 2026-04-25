@@ -1076,9 +1076,8 @@ fn split_skill_frontmatter(doc: &str) -> (Option<&str>, &str) {
         let end = search_from + rel;
         let after_marker = end + "\n---".len();
         let tail = &rest[after_marker..];
-        let is_line_terminated = tail.is_empty()
-            || tail.starts_with('\n')
-            || tail.starts_with("\r\n");
+        let is_line_terminated =
+            tail.is_empty() || tail.starts_with('\n') || tail.starts_with("\r\n");
         if is_line_terminated {
             let fm = &rest[..end];
             // Skip the line-terminator after `---`.
