@@ -1,7 +1,7 @@
 # Oxide SDK
 
 Guest-side SDK for building WebAssembly applications that run inside the
-[Oxide browser](https://github.com/niklabh/oxide) — a binary-first browser
+[Oxide browser](https://github.com/oxidebrowser/oxide) — a binary-first browser
 that fetches and executes `.wasm` modules instead of HTML/JavaScript.
 
 This crate provides safe Rust wrappers around the raw host-imported functions

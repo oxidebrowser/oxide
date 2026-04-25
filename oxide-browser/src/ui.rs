@@ -2686,7 +2686,7 @@ impl Render for OxideBrowserView {
                                             .mt_3()
                                             .text_xs()
                                             .text_color(gpui::rgb(0x6a6a80))
-                                            .child("github.com/niklabh/oxide"),
+                                            .child("github.com/oxidebrowser/oxide"),
                                     ),
                             ),
                     );

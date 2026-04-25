@@ -1,10 +1,10 @@
 # Oxide — A Binary-First Browser
 
-[![Release](https://img.shields.io/github/v/release/niklabh/oxide?style=flat-square)](https://github.com/niklabh/oxide/releases)
+[![Release](https://img.shields.io/github/v/release/oxidebrowser/oxide?style=flat-square)](https://github.com/oxidebrowser/oxide/releases)
 [![Crates.io](https://img.shields.io/crates/v/oxide-sdk?style=flat-square)](https://crates.io/crates/oxide-sdk)
-[![License](https://img.shields.io/crates/l/oxide-sdk?style=flat-square)](https://github.com/niklabh/oxide/blob/main/LICENSE)
+[![License](https://img.shields.io/crates/l/oxide-sdk?style=flat-square)](https://github.com/oxidebrowser/oxide/blob/main/LICENSE)
 [![docs.rs](https://img.shields.io/docsrs/oxide-sdk?style=flat-square)](https://docs.rs/oxide-sdk)
-[![CI](https://img.shields.io/github/actions/workflow/status/niklabh/oxide/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/niklabh/oxide/actions/workflows/ci.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/oxidebrowser/oxide/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/oxidebrowser/oxide/actions/workflows/ci.yml)
 [![Built with Opus 4.7](https://img.shields.io/badge/Built%20with-Claude%20Opus%204.7-b478ff?style=flat-square)](./claude-hackathon.md)
 
 Oxide is a decentralised browser that fetches and executes `.wasm` (WebAssembly) modules instead of HTML/JavaScript. Guest applications run in a secure, sandboxed environment with capability-based access to host APIs.

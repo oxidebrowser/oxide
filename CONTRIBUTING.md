@@ -34,7 +34,7 @@ rustup target add wasm32-unknown-unknown
 ### Clone and Build
 
 ```bash
-git clone https://github.com/niklabh/oxide.git
+git clone https://github.com/oxidebrowser/oxide.git
 cd oxide
 
 # Build the browser

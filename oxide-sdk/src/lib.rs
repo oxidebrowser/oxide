@@ -4,7 +4,7 @@
 //! # Oxide SDK
 //!
 //! Guest-side SDK for building WebAssembly applications that run inside the
-//! [Oxide browser](https://github.com/niklabh/oxide). This crate provides
+//! [Oxide browser](https://github.com/oxidebrowser/oxide). This crate provides
 //! safe Rust wrappers around the raw host-imported functions exposed by the
 //! `"oxide"` wasm import module.
 //!
