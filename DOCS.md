@@ -1,5 +1,7 @@
 # Oxide Browser — Developer Documentation
 
+Detailed docs are available at [docs.oxide.foundation](https://docs.oxide.foundation/)
+
 ## What is Oxide?
 
 Oxide is a **binary-first browser** that fetches and executes `.wasm` (WebAssembly) modules instead of HTML/JavaScript. Guest applications run in a secure, sandboxed environment with zero access to the host filesystem, environment variables, or arbitrary network sockets.
